@@ -1,0 +1,170 @@
+#!/bin/bash
+
+usage()
+{
+	local OPTIONS_COUNT
+	local OPTION
+	local WRAP
+	local WRAPPED
+	
+	echo
+	
+	# Print OP_NAME if provided, $0 (the invoked script name) if not
+	if [ -n "$OP_NAME" ] ; then
+		echo "$OP_NAME"$'\n'
+	else
+		echo "$0"$'\n'
+	fi
+	
+	if [ -n "$OP_USAGE" ] ; then
+		echo "USAGE: $OP_USAGE"$'\n'
+	fi
+	
+	if [ -n "$OP_VERSION" ] ; then
+		echo "VERSION: $OP_VERSION"$'\n'
+	fi
+	
+	OPTIONS_COUNT=${#OP_OPTIONS[@]}
+	
+	# There is no options, we're done
+	if [ $OPTIONS_COUNT -eq 0 ] ; then
+		return
+	fi
+	
+	echo $'OPTIONS:\n'
+	
+	# Get the console width, minus 4, that value is used
+	# to wrap the options descriptions, see below
+	WRAP=`expr $(tput cols) - 4`
+	
+	for (( i=0 ; i < OPTIONS_COUNT ; i+=4 ))
+	do
+		OPTION=""
+		
+		# The option take an argument
+		if [ ${#OP_OPTIONS[i]} -gt 2 ] ; then
+			
+			# Extract the option short name (-o:file -> -o)
+			OPTION="$OPTION ${OP_OPTIONS[i]:0:2}"
+			
+			# Add the long name if provided (--output)
+			if [ ${OP_OPTIONS[i+1]} != "-" ] ; then
+				OPTION="$OPTION, ${OP_OPTIONS[i+1]}"
+			fi
+			
+			# Add the argument's name (file)
+			OPTION="$OPTION <${OP_OPTIONS[i]:3}>"
+				
+		# The option does not take an argument / is a flag
+		else
+			
+			# Short name
+			OPTION="$OPTION ${OP_OPTIONS[i]}"
+			
+			# Add the long name if provided
+			if [ ${OP_OPTIONS[i+1]} != "-" ] ; then
+				OPTION="$OPTION, ${OP_OPTIONS[i+1]}"
+			fi
+		fi
+		
+		# Default value
+		if [ "${OP_OPTIONS[i+2]}" != "-" ] ; then
+			OPTION="$OPTION [${OP_OPTIONS[i+2]}]"
+		fi
+		
+		# Wrap and pad the option's description
+		WRAPPED=`echo ${OP_OPTIONS[i+3]} | fold -sw $WRAP | sed -e 's/^./    &/'`
+		
+		# Print
+		echo "$OPTION"$'\n'"$WRAPPED"$'\n'
+	done
+}
+
+op_parse()
+{
+	local OPTIONS_COUNT=${#OP_OPTIONS}/4
+	if [ $OPTIONS_COUNT == 0 ] ; then
+		return
+	fi
+	
+	local ARGS_COUNT=$#
+	local LONGS_TO_SHORTS=()
+	local GOT_ARGUMENT=()
+	local GETOPS_STRING=""
+	local PRE_PARSED_ARGS
+	local CURRENT_ARG
+	local VAR_NAME
+	
+	ARGS=()
+	
+	# Populate ARGS with the defaults and declare
+	# convenients variables to access the options
+	for (( i=0 ; i <= OPTIONS_COUNT ; i++ ))
+	do
+		# Declare short name variable (-c -> op_c)
+		VAR_NAME="op_${OP_OPTIONS[i*4]:1:1}"		
+		eval ${VAR_NAME}=$i
+		
+		# Add the name to the getops string
+		GETOPS_STRING="$GETOPS_STRING${OP_OPTIONS[i*4]:1:1}"
+		
+		# Add a ":" if an argument is required by the current option
+		# and keep a reference to that for later use
+		if [ "${OP_OPTIONS[i*4]:2:1}" == ":" ] ; then
+			
+			GETOPS_STRING="$GETOPS_STRING:"
+			
+			GOT_ARGUMENT[i]=true
+		else
+			GOT_ARGUMENT[i]=false
+		fi
+		
+		# Declare long name variable (--option -> op_option)
+		if [ "${OP_OPTIONS[i*4+1]}" != "-" ] ; then
+			VAR_NAME="op_${OP_OPTIONS[i*4+1]:2}"
+			eval ${VAR_NAME}=$i
+			
+			LONGS_TO_SHORTS[${VAR_NAME}]=${OP_OPTIONS[i*4]:1:1}
+		fi
+		
+		# Set default value
+		ARGS[i]=${OP_OPTIONS[i*4+2]}
+	done
+	
+	# Repace long names by shorts...
+	PRE_PARSED_ARGS=()
+	for (( i=1 ; i <= ARGS_COUNT ; i++ ))
+	do
+		ARG="$1"
+		shift
+		
+		if [ ${ARG:0:2} == "--" ] ; then
+			
+			VAR_NAME="op_${ARG:2}"
+			
+			PRE_PARSED_ARGS[i-1]="-${LONGS_TO_SHORTS[$VAR_NAME]}"
+		else
+			PRE_PARSED_ARGS[i-1]="$ARG"
+		fi
+	done
+	
+	# Use getops to actually parse the options
+	while getopts $GETOPS_STRING CURRENT_ARG "${PRE_PARSED_ARGS[@]}"
+	do
+		VAR_NAME="op_$CURRENT_ARG"
+		
+		if [ "${GOT_ARGUMENT[$VAR_NAME]}" == true ] ; then
+			ARGS[$VAR_NAME]="$OPTARG"
+		else
+			ARGS[$VAR_NAME]=true
+		fi
+	done
+}
+
+# Handle --help
+if [ "$1" == "--help" ] ; then
+	usage
+	exit 1
+fi
+
+op_parse "$@"
